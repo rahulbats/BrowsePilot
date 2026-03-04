@@ -2,7 +2,7 @@
 
 import asyncio
 import sys
-from copilot import CopilotClient
+from copilot import CopilotClient, PermissionHandler
 from rich.console import Console
 from rich.markdown import Markdown
 from browser import create_browser_tools, get_browser
@@ -71,6 +71,7 @@ async def main():
         "tools": browser_tools,
         "system_message": {"content": SYSTEM_PROMPT},
         "on_user_input_request": handle_user_input,
+        "on_permission_request": PermissionHandler.approve_all,
     })
 
     try:
@@ -86,31 +87,32 @@ async def main():
                 break
 
             done = asyncio.Event()
-            full_response = []
+            streamed = False
 
             def on_event(event):
+                nonlocal streamed
                 event_type = event.type.value if hasattr(event.type, "value") else str(event.type)
 
                 if event_type == "assistant.message_delta":
                     delta = event.data.delta_content or ""
                     print(delta, end="", flush=True)
-                    full_response.append(delta)
+                    streamed = True
                 elif event_type == "assistant.message":
-                    if not full_response:
-                        # Non-streaming fallback
-                        console.print(f"\n[bold blue]🤖 BrowsePilot:[/] {event.data.content}")
-                    else:
+                    if streamed:
                         print()  # newline after streaming
+                    else:
+                        console.print(event.data.content)
                 elif event_type == "tool.executing":
                     tool_name = getattr(event.data, "name", "unknown")
-                    console.print(f"\n[dim]⚙️  Using tool: {tool_name}...[/]", end="")
+                    console.print(f"[dim]⚙️  Using tool: {tool_name}...[/]")
                 elif event_type == "session.idle":
                     done.set()
 
-            session.on(on_event)
+            unsubscribe = session.on(on_event)
             console.print("[bold blue]🤖 BrowsePilot:[/] ", end="")
             await session.send({"prompt": user_input})
             await done.wait()
+            unsubscribe()
 
     finally:
         console.print("\n[dim]Closing browser and cleaning up...[/]")
