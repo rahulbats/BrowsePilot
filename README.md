@@ -1,26 +1,33 @@
-# 🌐 CopilotBrowsePilot
+# 🌐 BrowsePilot
 
-**AI that browses with you, not for you.** A GitHub Copilot SDK agent with real browser superpowers.
-
-> Built for the FY26 GitHub Copilot SDK Enterprise Challenge
+**AI that browses with you, not for you.** Built with the GitHub Copilot SDK.
 
 ## The Problem
 
-AI assistants frequently give **wrong or outdated instructions** for web portals. Ask any AI "How do I create a resource group in Azure Portal?" and you'll likely get steps referencing buttons and menus that **no longer exist** — because the UI changed after the training cutoff.
+Every day, enterprise users ask AI assistants questions like:
 
-**This erodes trust.** Enterprise users waste time following phantom instructions, then lose confidence in AI assistance altogether.
+> *"How do I create a resource group in Azure Portal?"*
+> *"Where do I assign licenses in M365 Admin Center?"*
+> *"How do I enable branch protection on GitHub?"*
+
+The AI confidently gives step-by-step instructions — referencing buttons, menus, and layouts that **no longer exist**. The UI changed after the training cutoff. The user follows phantom instructions, gets lost, and **loses trust in AI assistance**.
+
+This is not a minor inconvenience. In enterprise environments:
+- **IT helpdesks** waste cycles on portal navigation questions
+- **New hires** struggle with unfamiliar admin portals
+- **Support teams** give outdated guidance because even docs lag behind UI changes
 
 ## The Solution
 
-**CopilotBrowsePilot** is a GitHub Copilot SDK-powered agent that can **open a real browser window** and read what's actually on the screen. Instead of hallucinating UI elements, it navigates to the real page, reads the live DOM, and guides you step-by-step based on **what's actually there**.
+**BrowsePilot** is like having someone look over your shoulder and point at the screen:
 
 ```
 🧑 You: How do I create a new resource group in Azure Portal?
 
 🤖 BrowsePilot: Let me open Azure Portal and check the current UI...
-   ⚙️ Using tool: browser_navigate...
-   ⚙️ Using tool: browser_read_page...
-   ⚙️ Using tool: browser_highlight...
+   ⚙️  browser_navigate → portal.azure.com
+   ⚙️  browser_read_page
+   ⚙️  browser_highlight → "Resource groups"
 
    I can see the Azure Portal. Here are the exact steps:
    1. Click "Resource groups" in the left sidebar (I've highlighted it in red)
@@ -29,72 +36,135 @@ AI assistants frequently give **wrong or outdated instructions** for web portals
    4. Click "Review + create"
 ```
 
-The user sees a **real Edge browser window** open on their screen with elements highlighted — grounded, trustworthy guidance.
+The user sees a **real browser window** open on their screen with elements highlighted — grounded, trustworthy guidance powered by the GitHub Copilot SDK.
+
+## Why This Is Different
+
+Existing AI browser agents (Browser-Use, Anthropic Computer Use, LaVague) are **autonomous** — you give them a task and they do everything with no visibility. BrowsePilot is a **co-pilot**:
+
+| | Autonomous Agents | CopilotBrowsePilot |
+|---|---|---|
+| **User involvement** | None — black box | User watches every step |
+| **Credentials** | Needs stored API keys/tokens | User logs in themselves — zero exposure |
+| **Trust model** | "Trust the AI did it right" | User sees and verifies every action |
+| **Enterprise readiness** | Risky for production portals | Safe — user confirms before sensitive actions |
+| **Cost** | Separate LLM API costs | Uses existing Copilot subscription |
+| **Learning** | User learns nothing | User learns the actual workflow |
+
+> **Other browser agents replace the user. BrowsePilot works alongside them.**
+
+
+## Enterprise Value
+
+### For IT Helpdesks
+Reduce Tier 1 portal navigation tickets by enabling users to self-serve with real-time, visually guided instructions.
+
+### For Onboarding
+New hires get a personal guide through any admin portal — Azure, M365, GitHub Enterprise, ServiceNow — without scheduling a shadow session.
+
+### For Support Engineers
+Instead of writing "click the button that says X" in docs (which goes stale), point users to BrowsePilot. It reads the **current** UI every time.
+
+### Reusable Pattern
+The browser tools are generic. Swap the system prompt for any domain:
+- **Azure Portal** — Resource management, IAM, deployments
+- **M365 Admin Center** — User management, license assignment
+- **GitHub Enterprise** — Repository settings, org management
+- **Salesforce / ServiceNow / Dynamics 365** — Any web-based enterprise tool
+- **Internal web apps** — Custom portals with no public documentation
 
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────┐
-│                   User                        │
-│              (types in CLI)                   │
-└──────────┬───────────────────────────────────┘
-           │
-           ▼
-┌──────────────────────────────────────────────┐
-│          Copilot SDK Session                  │
-│    (GPT-5 with custom browser tools)          │
-│                                               │
-│  Tools:                                       │
-│   🔗 browser_navigate    - Go to URL          │
-│   📖 browser_read_page   - Read DOM content   │
-│   🔍 browser_list_elements - Find UI elements │
-│   👆 browser_click       - Click elements     │
-│   ✏️  browser_fill        - Fill form fields   │
-│   🔴 browser_highlight   - Highlight elements │
-│   📸 browser_screenshot  - Capture page       │
-│   ⬅️  browser_go_back     - Navigate back      │
-└──────────┬───────────────────────────────────┘
-           │ Playwright
-           ▼
-┌──────────────────────────────────────────────┐
-│         Real Microsoft Edge Window            │
-│     (visible on user's screen)                │
-│                                               │
-│   User can see AND interact with the browser  │
-│   AI reads real DOM — no hallucinations       │
-└──────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────┐
+│                      User                            │
+│        Asks a question in the terminal               │
+└────────────────┬────────────────────────────────────┘
+                 │
+                 ▼
+┌─────────────────────────────────────────────────────┐
+│            GitHub Copilot SDK Session                 │
+│     (Model auto-selected from available models)      │
+│                                                      │
+│  Browser Tools (Playwright):                         │
+│   🔗 browser_navigate     Navigate to any URL        │
+│   📖 browser_read_page    Extract live page content  │
+│   🔍 browser_list_elements Find buttons, links, etc. │
+│   👆 browser_click        Click elements by text/CSS │
+│   ✏️  browser_fill         Fill form fields           │
+│   📋 browser_select       Select from dropdowns      │
+│   🔴 browser_highlight    Highlight with red border  │
+│   📸 browser_screenshot   Capture page state         │
+│   ⬅️  browser_go_back      Navigate back              │
+│   🔗 browser_get_url      Get current URL            │
+└────────────────┬────────────────────────────────────┘
+                 │ Playwright
+                 ▼
+┌─────────────────────────────────────────────────────┐
+│          Real Browser Window (user's screen)         │
+│                                                      │
+│   • Headed mode — user sees every action             │
+│   • Supports Edge, Chrome, Chromium, Firefox, WebKit │
+│   • User can interact alongside the agent            │
+│   • AI reads real DOM — no hallucinations            │
+└─────────────────────────────────────────────────────┘
 ```
 
-## Key Design Decisions
+## Features
 
-| Decision | Rationale |
-|---|---|
-| **Headed browser only** | The visible browser IS the feature — users see exactly what AI sees |
-| **No credential handling** | User logs in manually — zero security risk, full trust |
-| **DOM-grounded responses** | Agent MUST read the page before answering — no guessing |
-| **Visual highlighting** | Red borders + auto-scroll guide users to exact elements |
-| **Microsoft Edge** | Enterprise default browser — great optics for MCAPS |
+### Dynamic Model Selection
+On startup, the app queries available Copilot SDK models and lets the user choose:
+```
+Available Models:
+  [1] GPT-4o (gpt-4o)
+  [2] GPT-5 (gpt-5) — premium
+  [3] Claude Sonnet (claude-sonnet-4) — premium
 
-## Reusable Enterprise Pattern
+Select model [1-3]: 2
+✓ Using model: GPT-5
+```
 
-This pattern applies to **any enterprise web portal**:
+### Multi-Browser Support
+Choose from any Playwright-supported browser:
+```
+Available Browsers:
+  [1] Microsoft Edge (default)
+  [2] Google Chrome
+  [3] Chromium
+  [4] Firefox
+  [5] WebKit (Safari)
 
-- **Azure Portal** — Resource management, IAM, deployments
-- **M365 Admin Center** — User management, license assignment
-- **GitHub Enterprise** — Repository settings, org management
-- **Salesforce** — CRM workflows, report building
-- **ServiceNow** — Ticket management, catalog requests
-- **Any internal enterprise web app**
+Select browser [1-5]: 1
+✓ Using browser: Microsoft Edge
+```
 
-The browser tools are generic — swap the system prompt for any domain.
+### Smart Element Highlighting
+The highlight tool uses a 3-tier fallback for complex SPAs like Azure Portal:
+1. **CSS selector** — fast, exact match
+2. **Text-based search** — finds elements by visible text content
+3. **DOM TreeWalker** — brute-force scan for deeply nested elements
+
+Pass visible text like `"$150.00 credits remaining"` instead of guessing CSS selectors.
+
+### Intelligent Dropdown Selection
+Handles both native `<select>` elements and custom JavaScript dropdowns:
+- Native HTML selects via `select_option()`
+- Custom dropdowns: click to open → scroll into view → click option
+- ARIA role-based matching (`role="option"`)
+- Brute-force DOM pattern matching for non-standard dropdowns
+
+### Robust Cleanup
+- Each cleanup step (browser, session, client) is independent with 5-second timeouts
+- Force-kills lingering Playwright processes on exit
+- Ctrl+C is handled gracefully on Windows — no zombie processes
 
 ## Setup
 
 ### Prerequisites
 
 - Python 3.11+
-- [GitHub Copilot CLI](https://docs.github.com/en/copilot/how-tos/set-up/install-copilot-cli) installed and authenticated
-- Microsoft Edge browser
+- GitHub Copilot CLI installed and authenticated (`gh auth login`)
+- A browser (Edge is default; Chrome, Firefox also supported)
 
 ### Installation
 
@@ -105,14 +175,14 @@ cd copilot-browse-pilot
 
 # Create virtual environment
 python -m venv .venv
-.venv\Scripts\activate  # Windows
-# source .venv/bin/activate  # macOS/Linux
+.venv\Scripts\activate          # Windows
+# source .venv/bin/activate     # macOS/Linux
 
 # Install dependencies
 pip install -r requirements.txt
 
-# Install Playwright browsers
-playwright install msedge
+# Install Playwright browser(s)
+playwright install msedge        # or: playwright install chromium
 ```
 
 ### Run
@@ -121,49 +191,82 @@ playwright install msedge
 python main.py
 ```
 
-A chat interface starts. Ask any question about a website — the agent will open Edge and guide you through it.
+Select your model and browser, then start asking questions about any website.
 
 ## Demo Scenarios
 
-### 1. Azure Portal: Create a Resource Group
+### 1. Azure Portal — Create a Resource Group
 ```
 You: How do I create a new resource group in Azure Portal?
-→ Agent opens Edge, navigates to portal.azure.com, reads the real UI, highlights elements
+→ Opens Edge, navigates to portal.azure.com
+→ Reads the live UI, highlights "Resource groups" in the sidebar
+→ Walks through each step with exact button names from the current UI
 ```
 
-### 2. GitHub: Enable Branch Protection
+### 2. GitHub — Enable Branch Protection
 ```
-You: How do I enable branch protection rules on my GitHub repo?
-→ Agent navigates to repo settings, reads actual options, guides step-by-step
+You: How do I enable branch protection rules on my repo?
+→ Navigates to repo Settings → Branches
+→ Lists actual available options, highlights "Add branch protection rule"
+→ Guides through the form fields
 ```
 
-### 3. Verifying Outdated Instructions
+### 3. Form Filling — State Dropdown
 ```
-You: The docs say to click "All Services" in Azure Portal. Is that still correct?
-→ Agent opens Azure Portal, checks if "All Services" exists, reports what's actually there
+You: Fill in Texas as the state in this form
+→ Finds the state dropdown, clicks to open it
+→ Scrolls down to "Texas", selects it
+→ Confirms the selection
+```
+
+### 4. Verifying Outdated Instructions
+```
+You: The docs say to click "All Services" in Azure Portal. Is that still there?
+→ Opens Azure Portal, reads the actual page
+→ Reports whether "All Services" exists or what replaced it
 ```
 
 ## Project Structure
 
 ```
 copilot-browse-pilot/
-├── main.py                 # Entry point — interactive chat with Copilot SDK
+├── main.py                 # Entry point — model/browser picker + chat loop
 ├── requirements.txt        # Python dependencies
-├── browser/
-│   ├── __init__.py
-│   ├── controller.py       # Playwright browser lifecycle (open/close/navigate)
-│   └── tools.py            # @define_tool definitions for Copilot SDK
-├── .env.example
-├── .gitignore
-└── README.md
+├── README.md
+└── browser/
+    ├── __init__.py         # Package exports
+    ├── controller.py       # Playwright browser lifecycle + all browser actions
+    └── tools.py            # @define_tool definitions for Copilot SDK
 ```
 
 ## Tech Stack
 
-- **[GitHub Copilot SDK](https://github.com/github/copilot-sdk)** — Agent runtime with custom tool support
-- **[Playwright](https://playwright.dev/python/)** — Browser automation (Microsoft)
-- **[Rich](https://github.com/Textualize/rich)** — Terminal formatting
-- **Microsoft Edge** — Enterprise browser
+| Component | Technology | Why |
+|---|---|---|
+| **Agent Runtime** | [GitHub Copilot SDK](https://github.com/github/copilot-sdk) | Challenge requirement; enterprise auth built-in |
+| **Browser Control** | [Playwright](https://playwright.dev/python/) | Microsoft-built; supports Edge, Chrome, Firefox, WebKit |
+| **Terminal UI** | [Rich](https://github.com/Textualize/rich) | Clean formatting for the chat interface |
+| **Default Browser** | Microsoft Edge | Enterprise default across MCAPS |
+
+## Key Design Decisions
+
+| Decision | Rationale |
+|---|---|
+| **Headed browser only** | The visible browser IS the feature — users see exactly what AI sees |
+| **No credential handling** | User logs in manually — zero security risk, full enterprise trust |
+| **DOM-grounded responses** | Agent must read the page before answering — never guesses from memory |
+| **Visual highlighting** | Red borders + auto-scroll guide users to exact elements |
+| **Text-based highlight** | CSS selectors fail on complex SPAs; text matching is more reliable |
+| **Multi-browser** | Enterprises use different browsers; don't assume Edge |
+| **Dynamic model selection** | Let users choose the best model for their task and budget |
+
+## Future Directions
+
+- **Custom agents** — Split into specialist agents (navigator, form filler, visual guide) using Copilot SDK's `custom_agents` for better tool routing
+- **Session transcript logging** — Save conversations + tool calls for audit trails
+- **Multi-tab support** — Compare information across multiple pages
+- **Screenshot analysis** — Send screenshots to vision models for richer page understanding
+- **VS Code Chat Participant** — Port to a `@browsepilot` chat participant for seamless IDE integration
 
 ## License
 

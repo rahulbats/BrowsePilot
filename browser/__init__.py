@@ -1,4 +1,4 @@
-from .controller import BrowserController
-from .tools import create_browser_tools, get_browser
+from .controller import BrowserController, AVAILABLE_BROWSERS
+from .tools import create_browser_tools, get_browser, init_browser
 
-__all__ = ["BrowserController", "create_browser_tools", "get_browser"]
+__all__ = ["BrowserController", "AVAILABLE_BROWSERS", "create_browser_tools", "get_browser", "init_browser"]

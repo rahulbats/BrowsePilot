@@ -6,10 +6,16 @@ from .controller import BrowserController
 
 
 # Shared browser instance
-_browser = BrowserController()
+_browser: BrowserController | None = None
 
 
 def get_browser() -> BrowserController:
+    return _browser
+
+
+def init_browser(browser_id: str = "msedge") -> BrowserController:
+    global _browser
+    _browser = BrowserController(browser_id=browser_id)
     return _browser
 
 
@@ -67,13 +73,26 @@ async def browser_fill(params: FillParams) -> str:
     return await _browser.fill(params.selector, params.value)
 
 
+class SelectParams(BaseModel):
+    selector: str = Field(description="CSS selector of the dropdown, or the visible label/placeholder text of the dropdown (e.g. 'State', 'Country', '#state-select')")
+    value: str = Field(description="The option text to select (e.g. 'Texas', 'United States'). Use the exact visible text of the option.")
+
+
+@define_tool(
+    name="browser_select",
+    description="Select an option from a dropdown menu. Works with both native HTML <select> elements and custom dropdowns (like those in Azure Portal, React, etc.). Pass the dropdown identifier and the option text you want to select. It will click to open the dropdown, scroll to find the option, and select it.",
+)
+async def browser_select(params: SelectParams) -> str:
+    return await _browser.select_option(params.selector, params.value)
+
+
 class HighlightParams(BaseModel):
-    selector: str = Field(description="CSS selector of the element to highlight with a red border")
+    selector: str = Field(description="CSS selector OR visible text to find and highlight. Prefer using the exact visible text from the page (e.g. '$150.00 credits remaining') rather than CSS selectors, since text matching is more reliable on complex pages.")
 
 
 @define_tool(
     name="browser_highlight",
-    description="Highlight an element on the page with a red border and scroll it into view. Use this to visually show the user which element to look at or click.",
+    description="Highlight an element on the page with a red border and scroll it into view. Accepts a CSS selector OR visible text from the page. Text-based matching is preferred for complex sites like Azure Portal — just pass the text you see on the page and it will find and highlight the right element.",
 )
 async def browser_highlight(params: HighlightParams) -> str:
     return await _browser.highlight(params.selector)
@@ -111,6 +130,7 @@ def create_browser_tools() -> list:
         browser_list_elements,
         browser_click,
         browser_fill,
+        browser_select,
         browser_highlight,
         browser_screenshot,
         browser_go_back,
