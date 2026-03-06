@@ -8,6 +8,7 @@ from copilot import CopilotClient, PermissionHandler
 from rich.console import Console
 from rich.markdown import Markdown
 from browser import create_browser_tools, get_browser, init_browser, AVAILABLE_BROWSERS
+import telemetry
 
 console = Console()
 
@@ -29,10 +30,16 @@ You have access to browser tools that control a real, visible Microsoft Edge win
 4. **Guide visually**: Use `browser_highlight` to point out elements with a red border
 5. **Act when asked**: Use `browser_click` or `browser_fill` to perform actions the user requests
 
+## CRITICAL SAFETY RULES — You MUST follow these
+- **NEVER click on login, sign-in, account picker, or authentication pages.** If you see a login page, account picker, consent prompt, MFA prompt, or any authentication-related UI, STOP immediately. Tell the user what you see and ask them to complete the sign-in themselves in the browser window. Do NOT click any buttons on auth pages.
+- **NEVER click "Accept", "Consent", "Agree", "Allow", or "Authorize" buttons.** These require explicit user consent. Describe what you see and let the user decide.
+- **NEVER submit forms that create, delete, or modify resources** without first telling the user exactly what will happen and waiting for their explicit confirmation.
+- **NEVER fill in or click anything involving passwords, credentials, tokens, or secrets.**
+- When in doubt, DESCRIBE what you see and ASK the user what to do — do not act autonomously on sensitive pages.
+
 ## Important Rules
 - ALWAYS read the actual page content before giving instructions — never guess from memory
 - Tell the user what you see on the page, referencing actual button text and menu names
-- If a page requires login, tell the user to log in manually in the browser window — you'll wait
 - When highlighting elements, describe where they are so the user can find them
 - Be concise and action-oriented: "Click the blue 'Create' button in the top-left" not "You might want to look for a button"
 
@@ -40,6 +47,9 @@ You have access to browser tools that control a real, visible Microsoft Edge win
 - Use short, clear steps
 - Reference exact UI text you see on the page (in quotes)
 - Proactively highlight relevant elements for the user
+
+## Reporting Discrepancies
+When you navigate to a page and find that something has changed (a button is gone, a link redirects somewhere unexpected, or the layout is different from what documentation suggests), use the `report_discrepancy` tool to log what you expected vs. what you found. This data helps backend teams update docs and improve AI accuracy. Only report if the user consented to telemetry at startup.
 """
 
 
@@ -116,7 +126,8 @@ def pick_browser() -> str:
 
 async def main():
     console.print("[bold green]🌐 BrowsePilot[/] — AI-powered browser co-pilot")
-    console.print("[dim]Type your question about any website or web portal. Type 'quit' to exit.[/]")
+    console.print("[dim]Type your question about any website or web portal.[/]")
+    console.print("[dim]Type 'quit' to exit. Press Esc to stop a response.[/]")
 
     client = CopilotClient()
     await client.start()
@@ -124,6 +135,35 @@ async def main():
     # --- Selection phase ---
     model_id = await pick_model(client)
     browser_id = pick_browser()
+
+    # --- Telemetry consent ---
+    console.print("\n[bold cyan]Improvement Data:[/]")
+    console.print("  BrowsePilot can log UI discrepancies (e.g. outdated links, missing buttons)")
+    console.print("  to Azure Application Insights. This helps improve docs and AI accuracy.")
+    console.print("  [dim]No personal data, credentials, or page content is logged — only URLs and\n  descriptions of what was expected vs. what was found.[/dim]")
+    try:
+        consent = input("\nEnable improvement data collection? [Y/n]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        consent = "y"
+    if consent not in ("n", "no"):
+        import os
+        conn_str = os.environ.get("APPLICATIONINSIGHTS_CONNECTION_STRING", "")
+        if not conn_str:
+            console.print("\n[bold yellow]⚠ APPLICATIONINSIGHTS_CONNECTION_STRING is not set.[/]")
+            console.print("  To enable Azure telemetry, run the following in your terminal and restart:")
+            console.print()
+            console.print('  [bold cyan]$env:APPLICATIONINSIGHTS_CONNECTION_STRING = "your-connection-string-here"[/]')
+            console.print()
+            console.print("  [dim]You can find the connection string in Azure Portal → your App Insights resource → Overview.[/dim]")
+            console.print("  [dim]Continuing without telemetry for now...[/dim]")
+            telemetry.set_consent(False)
+        else:
+            telemetry.set_consent(True)
+            telemetry.log_session_event("start", model=model_id, browser=browser_id)
+            console.print("[green]✓ Telemetry enabled — discrepancies will be sent to Azure Application Insights[/]")
+    else:
+        telemetry.set_consent(False)
+        console.print("[dim]✓ Telemetry disabled — no data will be collected[/]")
     console.print()
 
     browser = init_browser(browser_id)
@@ -152,21 +192,38 @@ async def main():
 
             done = asyncio.Event()
             streamed = False
+            thinking = False
 
             def on_event(event):
-                nonlocal streamed
+                nonlocal streamed, thinking
                 event_type = event.type.value if hasattr(event.type, "value") else str(event.type)
 
                 if event_type == "assistant.message_delta":
                     delta = event.data.delta_content or ""
-                    print(delta, end="", flush=True)
-                    streamed = True
-                elif event_type == "assistant.message":
-                    if streamed:
-                        print()  # newline after streaming
+                    if delta:
+                        if thinking:
+                            print()
+                            thinking = False
+                        print(delta, end="", flush=True)
+                        streamed = True
                     else:
-                        console.print(event.data.content)
+                        print(".", end="", flush=True)
+                        thinking = True
+                elif event_type == "assistant.message":
+                    if thinking:
+                        print()
+                        thinking = False
+                    if streamed:
+                        print()
+                        streamed = False
+                    else:
+                        content = getattr(event.data, "content", "") or ""
+                        if content.strip():
+                            console.print(content)
                 elif event_type == "tool.executing":
+                    if thinking:
+                        print()
+                        thinking = False
                     tool_name = getattr(event.data, "name", "unknown")
                     console.print(f"[dim]⚙️  Using tool: {tool_name}...[/]")
                 elif event_type == "session.idle":
@@ -174,9 +231,44 @@ async def main():
 
             unsubscribe = session.on(on_event)
             console.print("[bold blue]🤖 BrowsePilot:[/] ", end="")
-            await session.send({"prompt": user_input})
-            await done.wait()
-            unsubscribe()
+            stopped = False
+            try:
+                await session.send({"prompt": user_input})
+                # Wait for response, check for Escape key to stop
+                while not done.is_set():
+                    # Non-blocking key check on Windows
+                    if sys.platform == "win32":
+                        import msvcrt
+                        if msvcrt.kbhit():
+                            key = msvcrt.getch()
+                            if key == b'\x1b':  # Escape key
+                                stopped = True
+                                break
+                    await asyncio.sleep(0.1)
+                if stopped:
+                    print()
+                    console.print("[yellow]⏹ Stopped by user (Esc). You can ask another question.[/]")
+            except Exception as e:
+                print()
+                error_msg = str(e)
+                if "Session not found" in error_msg or "not connected" in error_msg.lower():
+                    console.print("[yellow]⚠ Session lost — reconnecting...[/]")
+                    try:
+                        session = await client.create_session({
+                            "model": model_id,
+                            "streaming": True,
+                            "tools": browser_tools,
+                            "system_message": {"content": SYSTEM_PROMPT},
+                            "on_user_input_request": handle_user_input,
+                            "on_permission_request": PermissionHandler.approve_all,
+                        })
+                        console.print("[green]✓ Session restored. Please ask your question again.[/]")
+                    except Exception as re:
+                        console.print(f"[red]Could not restore session: {re}[/]")
+                else:
+                    console.print(f"[red]Error: {error_msg}[/]")
+            finally:
+                unsubscribe()
 
     finally:
         await cleanup(browser, session, client)
@@ -226,13 +318,8 @@ def _kill_playwright_processes():
 
 
 if __name__ == "__main__":
-    # Handle Ctrl+C gracefully on Windows
-    signal.signal(signal.SIGINT, signal.SIG_DFL)
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
         console.print("\n[dim]Interrupted — forcing cleanup...[/]")
         _kill_playwright_processes()
-    finally:
-        # Last-resort atexit isn't needed, but just in case
-        pass

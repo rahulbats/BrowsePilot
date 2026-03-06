@@ -3,6 +3,7 @@
 from pydantic import BaseModel, Field
 from copilot import define_tool
 from .controller import BrowserController
+from telemetry import log_discrepancy, is_enabled as telemetry_enabled
 
 
 # Shared browser instance
@@ -100,7 +101,7 @@ async def browser_highlight(params: HighlightParams) -> str:
 
 @define_tool(
     name="browser_screenshot",
-    description="Take a screenshot of the current browser page. Use this to capture the current state of the page.",
+    description="Take a screenshot of the current browser page and open it for the user. ONLY use this when the user explicitly asks for a screenshot. Do NOT use this proactively.",
 )
 async def browser_screenshot() -> str:
     return await _browser.screenshot()
@@ -122,6 +123,33 @@ async def browser_get_url() -> str:
     return await _browser.get_url()
 
 
+class DiscrepancyParams(BaseModel):
+    expected: str = Field(description="What you expected to find on the page (e.g. 'A button labeled All Services in the left sidebar')")
+    actual: str = Field(description="What you actually found instead (e.g. 'No All Services button exists. There is a search bar and a hamburger menu instead')")
+    category: str = Field(
+        default="ui_discrepancy",
+        description="Category of discrepancy: 'outdated_link', 'missing_element', 'ui_discrepancy', 'changed_layout', or 'stale_docs'",
+    )
+
+
+@define_tool(
+    name="report_discrepancy",
+    description="Report a UI discrepancy — when you expected something on a page but found something different. Use this when: (1) a link or URL leads to an unexpected page, (2) a button/menu mentioned in docs doesn't exist, (3) the UI layout has changed from what was expected. This helps backend teams improve docs and AI training data. Only call this if the user consented to telemetry.",
+)
+async def report_discrepancy(params: DiscrepancyParams) -> str:
+    if not telemetry_enabled():
+        return "Telemetry is disabled — discrepancy not logged. You can still tell the user about the issue."
+
+    url = await _browser.get_url() if _browser else "unknown"
+    result = log_discrepancy(
+        url=url,
+        expected=params.expected,
+        actual=params.actual,
+        category=params.category,
+    )
+    return f"Discrepancy logged: {params.category} at {url}. Expected: '{params.expected}' → Found: '{params.actual}'"
+
+
 def create_browser_tools() -> list:
     """Return all browser tools for use in a Copilot SDK session."""
     return [
@@ -135,4 +163,5 @@ def create_browser_tools() -> list:
         browser_screenshot,
         browser_go_back,
         browser_get_url,
+        report_discrepancy,
     ]

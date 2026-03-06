@@ -97,6 +97,7 @@ The browser tools are generic. Swap the system prompt for any domain:
 │   📸 browser_screenshot   Capture page state         │
 │   ⬅️  browser_go_back      Navigate back              │
 │   🔗 browser_get_url      Get current URL            │
+│   📊 report_discrepancy   Log UI changes to Azure    │
 └────────────────┬────────────────────────────────────┘
                  │ Playwright
                  ▼
@@ -154,9 +155,72 @@ Handles both native `<select>` elements and custom JavaScript dropdowns:
 - Brute-force DOM pattern matching for non-standard dropdowns
 
 ### Robust Cleanup
+
 - Each cleanup step (browser, session, client) is independent with 5-second timeouts
 - Force-kills lingering Playwright processes on exit
 - Ctrl+C is handled gracefully on Windows — no zombie processes
+
+### Persistent Login (Entra ID SSO)
+
+BrowsePilot uses a **persistent browser profile** stored at `~/.browsepilot/browser-profile/`. This means:
+
+- **Log in once, stay logged in** — Azure Portal, M365, GitHub Enterprise SSO sessions persist between runs
+- **Entra ID SSO works automatically** — if your org uses Entra ID for portal auth, the browser remembers your session just like your normal Edge browser
+- **No credentials in code** — authentication is handled entirely by the browser's cookie/session storage
+- **Per-browser profiles** — each browser choice (Edge, Chrome, Firefox) gets its own profile directory
+- **Configurable** — set `BROWSEPILOT_PROFILE_DIR` environment variable to customize the profile location
+
+## Azure Integration — Discrepancy Feedback Loop
+
+BrowsePilot includes an opt-in **discrepancy reporting** system powered by Azure Application Insights. When the AI navigates to a page and finds that something has changed (a button is gone, a link redirects somewhere unexpected, the layout differs from documentation), it automatically logs the discrepancy.
+
+### How It Works
+
+```
+User: "How do I find All Services in Azure Portal?"
+     ↓
+AI navigates to Azure Portal → reads the page
+     ↓
+AI: "There's no 'All Services' button anymore. It's been replaced by a search bar."
+     ↓
+AI calls report_discrepancy:
+  expected: "Button labeled 'All Services' in left sidebar"
+  actual:   "No 'All Services'. Replaced by unified search bar at top"
+  category: "outdated_ui_reference"
+     ↓
+Event sent to Azure Application Insights
+     ↓
+Backend/docs teams query: "Which URLs have the most discrepancies this month?"
+```
+
+### What Gets Logged
+
+| Field | Example | Purpose |
+| --- | --- | --- |
+| `url` | `https://portal.azure.com` | Which page had the issue |
+| `expected` | "Button: All Services" | What the AI/docs predicted |
+| `actual` | "Search bar, no All Services" | What's really there |
+| `category` | `outdated_ui_reference` | Type of discrepancy |
+| `timestamp` | `2026-03-04T15:30:00Z` | When it was found |
+| `model` | `gpt-5` | Which model was being used |
+
+**No personal data, credentials, or page content is logged.**
+
+### Privacy & Consent
+
+- Telemetry is **opt-in** — the user is asked at startup and must explicitly say "yes"
+- If declined, the `report_discrepancy` tool still exists but returns without logging
+- Connection string is configured via `APPLICATIONINSIGHTS_CONNECTION_STRING` environment variable
+- No telemetry is sent if the variable is not set (logs locally only)
+
+### Setup
+
+1. Create an Azure Application Insights resource
+2. Copy the connection string
+3. Set the environment variable:
+   ```bash
+   export APPLICATIONINSIGHTS_CONNECTION_STRING="InstrumentationKey=xxx;..."
+   ```
 
 ## Setup
 
@@ -230,12 +294,13 @@ You: The docs say to click "All Services" in Azure Portal. Is that still there?
 
 ```
 copilot-browse-pilot/
-├── main.py                 # Entry point — model/browser picker + chat loop
+├── main.py                 # Entry point — model/browser picker + consent + chat loop
+├── telemetry.py            # Azure App Insights integration + discrepancy logging
 ├── requirements.txt        # Python dependencies
 ├── README.md
 └── browser/
     ├── __init__.py         # Package exports
-    ├── controller.py       # Playwright browser lifecycle + all browser actions
+    ├── controller.py       # Playwright browser lifecycle + persistent profiles
     └── tools.py            # @define_tool definitions for Copilot SDK
 ```
 
@@ -245,8 +310,10 @@ copilot-browse-pilot/
 |---|---|---|
 | **Agent Runtime** | [GitHub Copilot SDK](https://github.com/github/copilot-sdk) | Challenge requirement; enterprise auth built-in |
 | **Browser Control** | [Playwright](https://playwright.dev/python/) | Microsoft-built; supports Edge, Chrome, Firefox, WebKit |
+| **Observability** | [Azure Application Insights](https://learn.microsoft.com/en-us/azure/azure-monitor/app/app-insights-overview) | Discrepancy telemetry + tool execution logging |
 | **Terminal UI** | [Rich](https://github.com/Textualize/rich) | Clean formatting for the chat interface |
 | **Default Browser** | Microsoft Edge | Enterprise default across MCAPS |
+| **Auth** | Entra ID SSO (via persistent browser profile) | Enterprise SSO — login once, stay logged in |
 
 ## Key Design Decisions
 
@@ -259,6 +326,30 @@ copilot-browse-pilot/
 | **Text-based highlight** | CSS selectors fail on complex SPAs; text matching is more reliable |
 | **Multi-browser** | Enterprises use different browsers; don't assume Edge |
 | **Dynamic model selection** | Let users choose the best model for their task and budget |
+
+## Security, Governance & Responsible AI
+
+### Authentication & Credentials
+
+- **Zero credential exposure** — BrowsePilot never stores, transmits, or handles passwords/tokens. The user logs in via the browser's normal auth flow (Entra ID SSO, MFA, etc.)
+- **Persistent browser profile** — Login sessions are stored in browser cookies at `~/.browsepilot/browser-profile/`, the same way a normal browser remembers sessions. No application-level credential storage.
+- **Per-user isolation** — The profile directory is local to the user's machine. No shared state, no server-side storage.
+
+### Human-in-the-Loop Safety
+
+The system prompt enforces strict guardrails:
+
+- **Never clicks on login/auth pages** — If the AI detects a sign-in page, account picker, or consent prompt, it stops and asks the user to complete authentication manually
+- **Never accepts consent/permission prompts** — Buttons like "Accept", "Authorize", "Allow" require explicit user action
+- **Never submits destructive actions without confirmation** — Create/delete/modify operations are described to the user first
+- **Never handles passwords or secrets** — The AI will not fill in password fields or interact with credential inputs
+
+### Responsible AI
+
+- **Transparency** — Every tool call is visible in the terminal. The user sees exactly what the AI is doing (which tool, which element, which page)
+- **Grounded responses** — The AI reads the live DOM before answering. It does not hallucinate UI elements from training data
+- **User agency** — The user can interact with the browser alongside the AI at any time. The AI is a co-pilot, not an autonomous agent
+- **No data exfiltration** — Page content is sent to the Copilot SDK for reasoning but is not logged, stored, or forwarded elsewhere
 
 ## Future Directions
 

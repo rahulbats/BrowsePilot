@@ -1,7 +1,13 @@
-"""Playwright browser lifecycle management for headed Edge sessions."""
+"""Playwright browser lifecycle management for headed browser sessions with persistent login."""
 
 import asyncio
+import os
+import sys
+from pathlib import Path
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page, Playwright
+from rich.console import Console
+
+_console = Console()
 
 
 AVAILABLE_BROWSERS = [
@@ -12,6 +18,13 @@ AVAILABLE_BROWSERS = [
     {"id": "webkit", "name": "WebKit (Safari)", "engine": "webkit", "channel": None},
 ]
 
+# Persistent profile directory — stores cookies, localStorage, and session data
+# between runs so users don't have to re-login every time
+PROFILE_DIR = Path(os.environ.get(
+    "BROWSEPILOT_PROFILE_DIR",
+    Path.home() / ".browsepilot" / "browser-profile",
+))
+
 
 class BrowserController:
     """Manages a single headed browser session that the user can see and interact with."""
@@ -21,6 +34,7 @@ class BrowserController:
         self._browser: Browser | None = None
         self._context: BrowserContext | None = None
         self._page: Page | None = None
+        self._persistent = True  # use persistent context for login retention
         self._browser_config = next(
             (b for b in AVAILABLE_BROWSERS if b["id"] == browser_id),
             AVAILABLE_BROWSERS[0],
@@ -32,27 +46,56 @@ class BrowserController:
 
     @property
     def is_open(self) -> bool:
+        if self._persistent:
+            return self._context is not None
         return self._browser is not None and self._browser.is_connected()
 
     async def launch(self) -> Page:
-        """Launch a visible browser window and return the active page."""
+        """Launch a visible browser window with persistent profile and return the active page."""
         if self.is_open:
             return self._page
+
+        browser_name = self._browser_config["name"]
+        _console.print(f"[dim]🚀 Launching {browser_name}...[/]")
 
         self._playwright = await async_playwright().start()
         engine = self._browser_config["engine"]
         channel = self._browser_config["channel"]
         launcher = getattr(self._playwright, engine)
 
-        launch_kwargs = {"headless": False, "args": ["--start-maximized"]}
+        # Ensure profile directory exists
+        profile_dir = PROFILE_DIR / self._browser_config["id"]
+        profile_dir.mkdir(parents=True, exist_ok=True)
+
+        launch_kwargs = {
+            "headless": False,
+            "args": ["--start-maximized"],
+            "no_viewport": True,
+            "handle_sigint": False,  # Don't kill browser on Ctrl+C
+            "handle_sigterm": False,  # Don't kill browser on SIGTERM
+            "handle_sighup": False,  # Don't kill browser on SIGHUP
+        }
         if channel:
             launch_kwargs["channel"] = channel
 
-        self._browser = await launcher.launch(**launch_kwargs)
-        self._context = await self._browser.new_context(
-            no_viewport=True,  # use full window size
+        # Use persistent context — retains cookies, localStorage, Entra ID SSO sessions
+        self._context = await launcher.launch_persistent_context(
+            user_data_dir=str(profile_dir),
+            **launch_kwargs,
         )
-        self._page = await self._context.new_page()
+        # Persistent context may open with multiple restored tabs — use the first, close extras
+        if self._context.pages:
+            self._page = self._context.pages[0]
+            # Close any extra tabs that were restored from the profile
+            for extra_page in self._context.pages[1:]:
+                try:
+                    await extra_page.close()
+                except Exception:
+                    pass
+        else:
+            self._page = await self._context.new_page()
+
+        _console.print(f"[dim]✓ {browser_name} is ready (profile: {profile_dir.name})[/]")
         return self._page
 
     async def navigate(self, url: str, wait_until: str = "domcontentloaded") -> str:
@@ -280,11 +323,34 @@ class BrowserController:
 
         return f"Could not find element matching '{selector}' on the page."
 
-    async def screenshot(self, path: str = "screenshot.png") -> str:
-        """Take a screenshot of the current page."""
+    async def screenshot(self, path: str = "") -> str:
+        """Take a screenshot of the current page and open it for the user."""
+        import time
+        import subprocess
         page = await self._ensure_page()
+
+        if not path:
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            screenshots_dir = Path.home() / ".browsepilot" / "screenshots"
+            screenshots_dir.mkdir(parents=True, exist_ok=True)
+            path = str(screenshots_dir / f"screenshot_{timestamp}.png")
+
         await page.screenshot(path=path, full_page=False)
-        return f"Screenshot saved to {path}"
+        title = await page.title()
+        url = page.url
+
+        # Auto-open the screenshot for the user
+        try:
+            if os.name == "nt":
+                os.startfile(path)
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", path])
+            else:
+                subprocess.Popen(["xdg-open", path])
+        except Exception:
+            pass
+
+        return f"Screenshot saved and opened: {path}\nPage: {title}\nURL: {url}"
 
     async def get_url(self) -> str:
         """Get the current page URL."""
@@ -299,6 +365,12 @@ class BrowserController:
 
     async def close(self):
         """Close the browser and clean up. Safe to call multiple times."""
+        if self._context:
+            try:
+                await self._context.close()
+            except Exception:
+                pass
+            self._context = None
         if self._browser:
             try:
                 await self._browser.close()
@@ -311,10 +383,19 @@ class BrowserController:
             except Exception:
                 pass
             self._playwright = None
-        self._context = None
         self._page = None
 
     async def _ensure_page(self) -> Page:
-        if not self.is_open or not self._page:
-            await self.launch()
+        """Ensure we have a live browser page. Re-launch if connection was lost."""
+        try:
+            if self.is_open and self._page:
+                # Quick check that the page is still responsive
+                await self._page.title()
+                return self._page
+        except Exception:
+            # Browser connection lost (e.g. after Ctrl+C interrupt)
+            _console.print("[dim]🔄 Reconnecting browser...[/]")
+            # Fully clean up the old instance before re-launching
+            await self.close()
+        await self.launch()
         return self._page
