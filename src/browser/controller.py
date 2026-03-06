@@ -7,7 +7,8 @@ from pathlib import Path
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page, Playwright
 from rich.console import Console
 
-_console = Console()
+# Use stderr so output doesn't interfere with MCP protocol on stdout
+_console = Console(stderr=True)
 
 
 AVAILABLE_BROWSERS = [
@@ -101,20 +102,78 @@ class BrowserController:
     async def navigate(self, url: str, wait_until: str = "domcontentloaded") -> str:
         """Navigate to a URL and return the page title."""
         page = await self._ensure_page()
-        await page.goto(url, wait_until=wait_until, timeout=30000)
-        return await page.title()
+
+        # First try a straightforward navigation. If the underlying browser was
+        # killed or the target/page was closed, attempt a one-time reconnect
+        # instead of surfacing a low-level Playwright error to the caller.
+        try:
+            await page.goto(url, wait_until=wait_until, timeout=30000)
+        except Exception as e:
+            message = str(e)
+            if any(token in message for token in [
+                "Target closed",
+                "has been closed",
+                "browser has disconnected",
+            ]):
+                _console.print("[dim]🔄 Browser was closed; relaunching and retrying navigation...[/]")
+                await self.close()
+                page = await self.launch()
+                await page.goto(url, wait_until=wait_until, timeout=30000)
+            else:
+                raise
+
+        # Reading the title immediately after heavy SPA navigations (like Azure
+        # Portal) can sometimes hit "Execution context was destroyed" while the
+        # page is still settling. Handle that gracefully with a short wait and
+        # a single retry instead of treating it as a fatal error.
+        try:
+            return await page.title()
+        except Exception as e:
+            message = str(e)
+            if "Execution context was destroyed" in message:
+                _console.print("[dim]ℹ Page is still navigating; waiting before reading title...[/]")
+                try:
+                    await page.wait_for_load_state("domcontentloaded", timeout=15000)
+                    return await page.title()
+                except Exception:
+                    # Fall back to the URL if title remains unavailable.
+                    return page.url
+            raise
 
     async def get_page_content(self, max_length: int = 15000) -> str:
         """Extract readable text content from the current page."""
         page = await self._ensure_page()
-        content = await page.evaluate("""() => {
+        extract_script = """() => {
             // Remove scripts, styles, and hidden elements
             const clone = document.body.cloneNode(true);
             clone.querySelectorAll('script, style, noscript, [aria-hidden="true"]').forEach(el => el.remove());
             return clone.innerText.substring(0, """ + str(max_length) + """);
-        }""")
-        title = await page.title()
-        url = page.url
+        }"""
+
+        # Be resilient to transient navigations while we read the DOM.
+        try:
+            content = await page.evaluate(extract_script)
+        except Exception as e:
+            message = str(e)
+            if "Execution context was destroyed" in message:
+                _console.print("[dim]ℹ Page reload detected while reading content; retrying after load...[/]")
+                try:
+                    await page.wait_for_load_state("domcontentloaded", timeout=15000)
+                    content = await page.evaluate(extract_script)
+                except Exception:
+                    content = ""
+            else:
+                raise
+
+        try:
+            title = await page.title()
+        except Exception:
+            title = ""
+
+        try:
+            url = page.url
+        except Exception:
+            url = ""
         return f"Page: {title}\nURL: {url}\n\n{content}"
 
     async def get_interactive_elements(self) -> str:
@@ -387,15 +446,18 @@ class BrowserController:
 
     async def _ensure_page(self) -> Page:
         """Ensure we have a live browser page. Re-launch if connection was lost."""
-        try:
-            if self.is_open and self._page:
-                # Quick check that the page is still responsive
-                await self._page.title()
-                return self._page
-        except Exception:
-            # Browser connection lost (e.g. after Ctrl+C interrupt)
-            _console.print("[dim]🔄 Reconnecting browser...[/]")
-            # Fully clean up the old instance before re-launching
+        # Avoid expensive or fragile health checks on every call. Prefer cheap
+        # structural checks and only relaunch when it is clear the page is
+        # gone, which keeps MCP tool calls fast and reduces spurious
+        # reconnects while a page is simply mid-navigation.
+        if self.is_open and self._page and not self._page.is_closed():
+            return self._page
+
+        if not self.is_open:
+            # Clean up any stale handles so a fresh launch starts from a
+            # consistent state.
             await self.close()
+
+        _console.print("[dim]🔄 (Re)launching browser page...[/]")
         await self.launch()
         return self._page

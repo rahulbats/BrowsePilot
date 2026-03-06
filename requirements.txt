@@ -3,3 +3,5 @@ playwright>=1.49.0
 pydantic>=2.0.0
 rich>=13.0.0
 opencensus-ext-azure>=1.1.0
+# MCP server SDK for running BrowsePilot as @BrowsePilot from Copilot
+mcp>=1.26.0

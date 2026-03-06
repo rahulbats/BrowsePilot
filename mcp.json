@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "servers": {
+    "browsepilot": {
+      "command": "python",
+      "args": ["src/browsepilot_mcp.py"],
+      "env": {},
+      "disabled": false,
+      "description": "BrowsePilot MCP server that controls a real local browser using Playwright."
+    }
+  }
+}

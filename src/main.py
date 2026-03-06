@@ -2,8 +2,13 @@
 
 import asyncio
 import atexit
+import os
 import signal
 import sys
+
+# Ensure src/ is on the path when run from the project root (e.g. python src/main.py)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 from copilot import CopilotClient, PermissionHandler
 from rich.console import Console
 from rich.markdown import Markdown

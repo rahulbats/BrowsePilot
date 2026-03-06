@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "servers": {
+    "browsepilot": {
+      "command": "C:/Users/rahulbhatt/projects/copilot-browse-pilot/.venv/Scripts/python.exe",
+      "args": ["browsepilot_mcp.py"],
+      "env": {},
+      "disabled": false,
+      "description": "BrowsePilot MCP server that controls a real local browser using Playwright."
+    }
+  },
+  "inputs": []
+}

@@ -73,42 +73,69 @@ The browser tools are generic. Swap the system prompt for any domain:
 - **Salesforce / ServiceNow / Dynamics 365** — Any web-based enterprise tool
 - **Internal web apps** — Custom portals with no public documentation
 
+## Two Ways to Use BrowsePilot
+
+BrowsePilot can be used in two ways — pick whichever fits your workflow:
+
+| | **CLI** (`python src/main.py`) | **MCP Server** (`@BrowsePilot`) |
+|---|---|---|
+| **Where you type** | Standalone terminal chat | VS Code Copilot Chat or Copilot CLI |
+| **Model selection** | Interactive picker at startup | Uses whatever model Copilot Chat selects |
+| **Browser selection** | Interactive picker at startup | Edge by default (configurable) |
+| **Telemetry consent** | Interactive prompt at startup | Auto-enabled when `APPLICATIONINSIGHTS_CONNECTION_STRING` is set in env / `mcp.json` |
+| **Best for** | Quick standalone exploration | Integrated Copilot Chat workflows |
+
+Both paths share the same `BrowserController`, the same Playwright-based tools,
+and the same persistent browser profile for Entra ID SSO.
+
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                      User                            │
-│        Asks a question in the terminal               │
-└────────────────┬────────────────────────────────────┘
-                 │
-                 ▼
-┌─────────────────────────────────────────────────────┐
-│            GitHub Copilot SDK Session                 │
-│     (Model auto-selected from available models)      │
-│                                                      │
-│  Browser Tools (Playwright):                         │
-│   🔗 browser_navigate     Navigate to any URL        │
-│   📖 browser_read_page    Extract live page content  │
-│   🔍 browser_list_elements Find buttons, links, etc. │
-│   👆 browser_click        Click elements by text/CSS │
-│   ✏️  browser_fill         Fill form fields           │
-│   📋 browser_select       Select from dropdowns      │
-│   🔴 browser_highlight    Highlight with red border  │
-│   📸 browser_screenshot   Capture page state         │
-│   ⬅️  browser_go_back      Navigate back              │
-│   🔗 browser_get_url      Get current URL            │
-│   📊 report_discrepancy   Log UI changes to Azure    │
-└────────────────┬────────────────────────────────────┘
-                 │ Playwright
-                 ▼
-┌─────────────────────────────────────────────────────┐
-│          Real Browser Window (user's screen)         │
-│                                                      │
-│   • Headed mode — user sees every action             │
-│   • Supports Edge, Chrome, Chromium, Firefox, WebKit │
-│   • User can interact alongside the agent            │
-│   • AI reads real DOM — no hallucinations            │
-└─────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                           User                               │
+│     Terminal (CLI) ──or── VS Code / Copilot Chat (MCP)       │
+└──────────┬─────────────────────────────┬────────────────────┘
+           │                             │
+      CLI path                      MCP path
+           │                             │
+           ▼                             ▼
+┌──────────────────────┐   ┌──────────────────────────────┐
+│  Copilot SDK Session │   │  BrowsePilot MCP Server      │
+│  (main.py)           │   │  (browsepilot_mcp.py)        │
+│                      │   │  ← discovered via mcp.json   │
+│  browser/tools.py    │   │                              │
+│  (in-process tools)  │   │  Exposes browser_* tools +   │
+│                      │   │  report_discrepancy over MCP │
+└──────────┬───────────┘   └──────────────┬───────────────┘
+           │                              │
+           └──────────┬───────────────────┘
+                      │
+                      ▼
+         ┌────────────────────────┐
+         │   BrowserController    │
+         │  (src/browser/controller.py)│
+         │   Persistent profile   │
+         └────────────┬───────────┘
+                      │ Playwright
+                      ▼
+         ┌────────────────────────┐
+         │  Real Browser Window   │
+         │  (Edge/Chrome/Firefox) │
+         │  on user's screen      │
+         └────────────────────────┘
+
+Shared browser tools:
+  🔗 browser_navigate      Navigate to any URL
+  📖 browser_read_page     Extract live page content
+  🔍 browser_list_elements Find buttons, links, etc.
+  👆 browser_click         Click elements by text/CSS
+  ✏️  browser_fill          Fill form fields
+  📋 browser_select        Select from dropdowns
+  🔴 browser_highlight     Highlight with red border
+  📸 browser_screenshot    Capture page state
+  ⬅️  browser_go_back       Navigate back
+  🔗 browser_get_url       Get current URL
+  📊 report_discrepancy    Log UI changes to Azure App Insights
 ```
 
 ## Features
@@ -249,13 +276,72 @@ pip install -r requirements.txt
 playwright install msedge        # or: playwright install chromium
 ```
 
-### Run
+### Option A — Run as a standalone CLI
 
 ```bash
-python main.py
+python src/main.py
 ```
 
-Select your model and browser, then start asking questions about any website.
+The CLI lets you interactively select a Copilot model and browser, opt in to
+telemetry, and then start chatting. The browser opens on your screen and the
+agent navigates, reads, and highlights elements in real time.
+
+### Option B — Run as an MCP server (`@BrowsePilot` in Copilot Chat)
+
+BrowsePilot ships an MCP server so you can use it directly from **VS Code
+Copilot Chat** or the **Copilot CLI** without running a separate terminal.
+
+#### 1. Register the MCP source
+
+**VS Code** — add to your User or Workspace `settings.json`:
+
+```json
+"github.copilot.mcp.sources": {
+  "browsepilot-local": {
+    "type": "local",
+    "path": "C:/Users/<you>/projects/copilot-browse-pilot"
+  }
+}
+```
+
+**Copilot CLI** — add to `~/.config/github-copilot/mcp.json`:
+
+```json
+{
+  "sources": {
+    "browsepilot-local": {
+      "type": "local",
+      "path": "C:/Users/<you>/projects/copilot-browse-pilot"
+    }
+  }
+}
+```
+
+Copilot will discover the `browsepilot` server from this repo's `mcp.json`.
+
+#### 2. (Optional) Configure telemetry
+
+To enable discrepancy logging to Azure Application Insights via MCP, add your
+connection string to `mcp.json`:
+
+```json
+"env": {
+  "APPLICATIONINSIGHTS_CONNECTION_STRING": "InstrumentationKey=...;IngestionEndpoint=..."
+}
+```
+
+Alternatively, set `APPLICATIONINSIGHTS_CONNECTION_STRING` as a system/user
+environment variable.
+
+#### 3. Use it
+
+In Copilot Chat, use `@BrowsePilot` and ask questions like:
+
+> "Open Azure Portal and show me how to create a resource group."
+
+The MCP server starts Playwright locally, opens Edge, and the model uses
+`browser_*` tools to navigate and highlight elements — all grounded to the live
+page.
 
 ## Demo Scenarios
 
@@ -294,14 +380,22 @@ You: The docs say to click "All Services" in Azure Portal. Is that still there?
 
 ```
 copilot-browse-pilot/
-├── main.py                 # Entry point — model/browser picker + consent + chat loop
-├── telemetry.py            # Azure App Insights integration + discrepancy logging
+├── AGENTS.md               # Agent description for Copilot Chat (custom instructions)
+├── mcp.json                # MCP server registration (discovered by Copilot)
 ├── requirements.txt        # Python dependencies
 ├── README.md
-└── browser/
-    ├── __init__.py         # Package exports
-    ├── controller.py       # Playwright browser lifecycle + persistent profiles
-    └── tools.py            # @define_tool definitions for Copilot SDK
+├── src/                    # Working code
+│   ├── main.py             # CLI entry point — model/browser picker + chat loop
+│   ├── browsepilot_mcp.py  # MCP server — exposes browser tools for @BrowsePilot
+│   ├── telemetry.py        # Azure App Insights integration + discrepancy logging
+│   └── browser/
+│       ├── __init__.py     # Package exports
+│       ├── controller.py   # Playwright browser lifecycle + persistent profiles
+│       └── tools.py        # @define_tool definitions for Copilot SDK (CLI)
+├── docs/
+│   └── README.md           # Extended documentation (problem→solution, prereqs, setup, architecture, RAI)
+└── presentations/
+    └── BrowsePilot.pptx    # Demo deck
 ```
 
 ## Tech Stack
