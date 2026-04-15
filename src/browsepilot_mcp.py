@@ -47,6 +47,46 @@ async def _ensure_browser_launched() -> BrowserController:
 
 
 @mcp.tool()
+async def browser_connect(endpoint: str = "http://localhost:9222") -> str:
+    """Connect to an already-running browser via Chrome DevTools Protocol (CDP).
+
+    The target browser must have been started with --remote-debugging-port=9222
+    (or whatever port you specify). This lets BrowsePilot control tabs the user
+    already has open instead of launching a new browser window.
+
+    Example: start Edge with  msedge --remote-debugging-port=9222
+    """
+
+    browser = get_browser()
+    return await browser.connect_cdp(endpoint)
+
+
+@mcp.tool()
+async def browser_list_tabs() -> str:
+    """List all open tabs in the connected browser with their titles and URLs.
+
+    The currently active tab is marked with an arrow.
+    """
+
+    browser = get_browser()
+    return await browser.list_pages()
+
+
+@mcp.tool()
+async def browser_switch_tab(tab_index: int = -1, url_substring: str = "") -> str:
+    """Switch to a different browser tab by its index number or by a URL substring.
+
+    Use browser_list_tabs first to see available tabs and their indices.
+    Provide either tab_index (0-based) or url_substring (partial URL match).
+    """
+
+    browser = get_browser()
+    idx = tab_index if tab_index >= 0 else None
+    url = url_substring if url_substring else None
+    return await browser.switch_to_page(tab_index=idx, url_substring=url)
+
+
+@mcp.tool()
 async def browser_navigate(url: str) -> str:
     """Open a real browser window and navigate to a URL.
 

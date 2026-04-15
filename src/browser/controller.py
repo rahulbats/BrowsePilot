@@ -36,6 +36,7 @@ class BrowserController:
         self._context: BrowserContext | None = None
         self._page: Page | None = None
         self._persistent = True  # use persistent context for login retention
+        self._connected_via_cdp = False  # True when attached to an existing browser
         self._browser_config = next(
             (b for b in AVAILABLE_BROWSERS if b["id"] == browser_id),
             AVAILABLE_BROWSERS[0],
@@ -98,6 +99,83 @@ class BrowserController:
 
         _console.print(f"[dim]✓ {browser_name} is ready (profile: {profile_dir.name})[/]")
         return self._page
+
+    async def connect_cdp(self, endpoint: str = "http://localhost:9222") -> str:
+        """Connect to an already-running Chromium/Edge/Chrome browser via CDP.
+
+        The target browser must have been started with
+        --remote-debugging-port=9222 (or whichever port ``endpoint`` points to).
+
+        Returns a summary of open tabs.
+        """
+        # Tear down any previous session first.
+        await self.close()
+
+        self._playwright = await async_playwright().start()
+        _console.print(f"[dim]🔗 Connecting to browser at {endpoint}...[/]")
+        self._browser = await self._playwright.chromium.connect_over_cdp(endpoint)
+        self._connected_via_cdp = True
+        self._persistent = False  # CDP mode is not a persistent context
+
+        # Pick the first context (the default profile) and the active page.
+        contexts = self._browser.contexts
+        if not contexts:
+            raise RuntimeError("Connected via CDP but found no browser contexts.")
+        self._context = contexts[0]
+        if self._context.pages:
+            self._page = self._context.pages[0]
+        else:
+            self._page = await self._context.new_page()
+
+        tab_summary = await self.list_pages()
+        _console.print(f"[dim]✓ Connected to existing browser ({len(self._context.pages)} tab(s))[/]")
+        return tab_summary
+
+    async def list_pages(self) -> str:
+        """Return a numbered list of all open tabs in the attached browser."""
+        if not self._context:
+            return "No browser connected. Use connect_cdp() or launch() first."
+        lines = ["Open tabs:"]
+        for i, pg in enumerate(self._context.pages):
+            try:
+                title = await pg.title()
+            except Exception:
+                title = "(unknown)"
+            marker = "  →" if pg == self._page else "   "
+            lines.append(f"{marker} [{i}] {title}  ({pg.url})")
+        return "\n".join(lines)
+
+    async def switch_to_page(self, tab_index: int | None = None, url_substring: str | None = None) -> str:
+        """Switch to a different tab by index or by URL substring."""
+        if not self._context:
+            return "No browser connected."
+        pages = self._context.pages
+        if not pages:
+            return "No tabs open."
+
+        target: Page | None = None
+        if tab_index is not None:
+            if 0 <= tab_index < len(pages):
+                target = pages[tab_index]
+            else:
+                return f"Invalid tab index {tab_index}. There are {len(pages)} tab(s) (0-{len(pages)-1})."
+        elif url_substring is not None:
+            for pg in pages:
+                if url_substring.lower() in pg.url.lower():
+                    target = pg
+                    break
+            if target is None:
+                return f"No tab found whose URL contains '{url_substring}'."
+        else:
+            return "Provide either tab_index or url_substring."
+
+        self._page = target
+        await target.bring_to_front()
+        try:
+            title = await target.title()
+        except Exception:
+            title = "(unknown)"
+        return f"Switched to tab [{pages.index(target)}]: {title} ({target.url})"
 
     async def navigate(self, url: str, wait_until: str = "domcontentloaded") -> str:
         """Navigate to a URL and return the page title."""
@@ -424,18 +502,28 @@ class BrowserController:
 
     async def close(self):
         """Close the browser and clean up. Safe to call multiple times."""
-        if self._context:
-            try:
-                await self._context.close()
-            except Exception:
-                pass
+        if self._connected_via_cdp:
+            # When connected via CDP we don't own the browser — just disconnect.
+            if self._browser:
+                try:
+                    await self._browser.close()
+                except Exception:
+                    pass
+                self._browser = None
             self._context = None
-        if self._browser:
-            try:
-                await self._browser.close()
-            except Exception:
-                pass  # browser process may already be dead
-            self._browser = None
+        else:
+            if self._context:
+                try:
+                    await self._context.close()
+                except Exception:
+                    pass
+                self._context = None
+            if self._browser:
+                try:
+                    await self._browser.close()
+                except Exception:
+                    pass  # browser process may already be dead
+                self._browser = None
         if self._playwright:
             try:
                 await self._playwright.stop()
@@ -443,6 +531,7 @@ class BrowserController:
                 pass
             self._playwright = None
         self._page = None
+        self._connected_via_cdp = False
 
     async def _ensure_page(self) -> Page:
         """Ensure we have a live browser page. Re-launch if connection was lost."""

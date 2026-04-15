@@ -1,6 +1,8 @@
-# 🌐 BrowsePilot
+# 🌐 Copilot-Browse-Pilot
 
 **AI that browses with you, not for you.** Built with the GitHub Copilot SDK.
+
+![BrowsePilot Walkthrough](walkthrough.gif)
 
 ## The Problem
 

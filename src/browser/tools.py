@@ -20,6 +20,42 @@ def init_browser(browser_id: str = "msedge") -> BrowserController:
     return _browser
 
 
+class ConnectParams(BaseModel):
+    endpoint: str = Field(
+        default="http://localhost:9222",
+        description="CDP endpoint (e.g. 'http://localhost:9222'). The browser must be started with --remote-debugging-port=9222.",
+    )
+
+
+@define_tool(
+    name="browser_connect",
+    description="Connect to an already-running browser via Chrome DevTools Protocol (CDP). The target browser must have been started with --remote-debugging-port=9222. This lets BrowsePilot control tabs the user already has open.",
+)
+async def browser_connect(params: ConnectParams) -> str:
+    return await _browser.connect_cdp(params.endpoint)
+
+
+@define_tool(
+    name="browser_list_tabs",
+    description="List all open tabs in the connected browser with their titles and URLs. The currently active tab is marked with an arrow.",
+)
+async def browser_list_tabs() -> str:
+    return await _browser.list_pages()
+
+
+class SwitchTabParams(BaseModel):
+    tab_index: int | None = Field(default=None, description="0-based index of the tab to switch to")
+    url_substring: str | None = Field(default=None, description="Partial URL to match (e.g. 'portal.azure.com')")
+
+
+@define_tool(
+    name="browser_switch_tab",
+    description="Switch to a different browser tab by index or URL substring. Use browser_list_tabs first to see available tabs.",
+)
+async def browser_switch_tab(params: SwitchTabParams) -> str:
+    return await _browser.switch_to_page(tab_index=params.tab_index, url_substring=params.url_substring)
+
+
 class NavigateParams(BaseModel):
     url: str = Field(description="The URL to navigate to (e.g. 'https://portal.azure.com')")
 

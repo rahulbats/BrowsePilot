@@ -34,6 +34,17 @@ The core system prompt (used in the CLI entrypoint) instructs the agent to:
 BrowsePilot exposes the following tools (both via the GitHub Copilot SDK in
 `src/browser/tools.py` and via MCP in `src/browsepilot_mcp.py`):
 
+- `browser_connect(endpoint: str) -> str`  
+  Connect to an already-running browser via Chrome DevTools Protocol (CDP).
+  The browser must be started with `--remote-debugging-port=9222`. This lets
+  BrowsePilot control tabs the user already has open.
+
+- `browser_list_tabs() -> str`  
+  List all open tabs in the connected browser with titles and URLs.
+
+- `browser_switch_tab(tab_index | url_substring) -> str`  
+  Switch to a different browser tab by index or partial URL match.
+
 - `browser_navigate(url: str) -> str`  
   Open a real browser window and navigate to the given URL.
 
