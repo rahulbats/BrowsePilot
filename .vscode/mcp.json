@@ -1,9 +1,9 @@
 {
   "servers": {
     "browsepilot": {
-      "command": "C:/Users/rahulbhatt/projects/copilot-browse-pilot/.venv/Scripts/python.exe",
+      "command": "C:/Users/rahulbhatt/projects/browser-companion/.venv/Scripts/python.exe",
       "args": [
-        "C:/Users/rahulbhatt/projects/copilot-browse-pilot/src/browsepilot_mcp.py"
+        "C:/Users/rahulbhatt/projects/browser-companion/src/browsepilot_mcp.py"
       ],
       "env": {},
       "disabled": false

@@ -94,8 +94,8 @@ playwright install msedge   # or: playwright install chromium
 Clone and install dependencies:
 
 ```bash
-git clone https://github.com/<your-org>/copilot-browse-pilot.git
-cd copilot-browse-pilot
+git clone https://github.com/<your-org>/browser-companion.git
+cd browser-companion
 
 python -m venv .venv
 # Windows
@@ -174,7 +174,7 @@ Relevant files:
   "sources": {
     "browsepilot-local": {
       "type": "local",
-      "path": "C:/Users/<you>/projects/copilot-browse-pilot"
+      "path": "C:/Users/<you>/projects/browser-companion"
     }
   }
 }

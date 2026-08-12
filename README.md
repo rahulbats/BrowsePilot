@@ -1,4 +1,4 @@
-# 🌐 Copilot-Browse-Pilot
+# 🌐 Browser Companion
 
 **AI that browses with you, not for you.** Built with the GitHub Copilot SDK.
 
@@ -263,8 +263,8 @@ Backend/docs teams query: "Which URLs have the most discrepancies this month?"
 
 ```bash
 # Clone the repo
-git clone https://github.com/your-username/copilot-browse-pilot.git
-cd copilot-browse-pilot
+git clone https://github.com/your-username/browser-companion.git
+cd browser-companion
 
 # Create virtual environment
 python -m venv .venv
@@ -301,7 +301,7 @@ Copilot Chat** or the **Copilot CLI** without running a separate terminal.
 "github.copilot.mcp.sources": {
   "browsepilot-local": {
     "type": "local",
-    "path": "C:/Users/<you>/projects/copilot-browse-pilot"
+    "path": "C:/Users/<you>/projects/browser-companion"
   }
 }
 ```
@@ -313,7 +313,7 @@ Copilot Chat** or the **Copilot CLI** without running a separate terminal.
   "sources": {
     "browsepilot-local": {
       "type": "local",
-      "path": "C:/Users/<you>/projects/copilot-browse-pilot"
+      "path": "C:/Users/<you>/projects/browser-companion"
     }
   }
 }
@@ -381,7 +381,7 @@ You: The docs say to click "All Services" in Azure Portal. Is that still there?
 ## Project Structure
 
 ```
-copilot-browse-pilot/
+browser-companion/
 ├── AGENTS.md               # Agent description for Copilot Chat (custom instructions)
 ├── mcp.json                # MCP server registration (discovered by Copilot)
 ├── requirements.txt        # Python dependencies
